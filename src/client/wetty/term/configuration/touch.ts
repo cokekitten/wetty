@@ -1,3 +1,4 @@
+import { copySelected } from './clipboard';
 import { debugLog } from './debug';
 import type { Term } from '../../term';
 
@@ -175,6 +176,26 @@ function setupTrackpadWheel(term: Term, screen: HTMLElement): void {
 }
 
 /**
+ Transient bottom-center toast confirming a long-press copy.
+ */
+function showCopyToast(): void {
+  const el = document.createElement('div');
+  el.textContent = '已复制 · Copied';
+  el.style.cssText =
+    'position:fixed;left:50%;bottom:15%;transform:translateX(-50%);' +
+    'background:rgba(0,0,0,.75);color:#fff;padding:6px 14px;' +
+    'border-radius:14px;font:13px sans-serif;z-index:9998;' +
+    'pointer-events:none;transition:opacity .3s;';
+  document.body.appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = '0';
+  }, 900);
+  setTimeout(() => {
+    el.remove();
+  }, 1300);
+}
+
+/**
  xterm.js has no built-in touch support: on phones a swipe pans nothing and
  taps don't reliably summon the soft keyboard. Translate touch gestures
  ourselves, mirroring what desktop terminals do with the mouse wheel:
@@ -194,6 +215,13 @@ export function setupTouch(term: Term): void {
   setupSoftKeyboardInput(term);
   setupTrackpadWheel(term, screen);
   const debug = debugLog;
+
+  if (coarsePointer) {
+    // Long-press must not open the browser context menu on Android.
+    screen.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    });
+  }
 
   const { textarea } = term;
   if (textarea && coarsePointer) {
@@ -266,6 +294,64 @@ export function setupTouch(term: Term): void {
   let lastY = 0;
   let scrolling = false;
   let lastTapAt = 0;
+  // Long-press selection: word-select under the finger, drag to extend,
+  // release to copy. This replaces the native selection action bar, which
+  // never appears for xterm's custom-drawn selection.
+  let selecting = false;
+  let selectAnchor: { col: number; row: number } | undefined;
+  let longPressTimer = 0;
+  let lastTouchX = 0;
+  let lastTouchY = 0;
+
+  const cellFromPoint = (
+    x: number,
+    y: number,
+  ): { col: number; row: number } => {
+    const rect = screen.getBoundingClientRect();
+    const cellW = rect.width / term.cols;
+    const cellH = rect.height / term.rows;
+    const clamp = (v: number, max: number): number =>
+      Math.min(max, Math.max(0, v));
+    return {
+      col: clamp(Math.floor((x - rect.left) / cellW), term.cols - 1),
+      row:
+        term.buffer.active.viewportY +
+        clamp(Math.floor((y - rect.top) / cellH), term.rows - 1),
+    };
+  };
+
+  const extendSelection = (to: { col: number; row: number }): void => {
+    if (selectAnchor === undefined) return;
+    let start = selectAnchor;
+    let end = to;
+    const pos = (c: { col: number; row: number }): number =>
+      c.row * term.cols + c.col;
+    if (pos(end) < pos(start)) [start, end] = [end, start];
+    term.select(start.col, start.row, pos(end) - pos(start) + 1);
+  };
+
+  const beginSelection = (): void => {
+    const cell = cellFromPoint(lastTouchX, lastTouchY);
+    const line =
+      term.buffer.active.getLine(cell.row)?.translateToString(false) ?? '';
+    let s = cell.col;
+    let e = cell.col;
+    if ((line[cell.col] ?? ' ') !== ' ') {
+      while (s > 0 && line[s - 1] !== ' ') s -= 1;
+      while (e < line.length - 1 && line[e + 1] !== ' ') e += 1;
+    }
+    selectAnchor = { col: s, row: cell.row };
+    term.select(s, cell.row, e - s + 1);
+    selecting = true;
+    debug('long-press: selection mode');
+  };
+
+  const cancelLongPress = (): void => {
+    if (longPressTimer !== 0) {
+      clearTimeout(longPressTimer);
+      longPressTimer = 0;
+    }
+  };
   // Flick state: velocity in px/ms (positive = finger moving up), sampled
   // as an exponential moving average over the drag.
   let velocity = 0;
@@ -305,6 +391,9 @@ export function setupTouch(term: Term): void {
     'touchstart',
     (e: TouchEvent) => {
       cancelMomentum();
+      cancelLongPress();
+      selecting = false;
+      if (term.hasSelection()) term.clearSelection();
       if (e.touches.length !== 1) {
         touchId = undefined;
         return;
@@ -314,10 +403,16 @@ export function setupTouch(term: Term): void {
       startY = touch.clientY;
       lastY = touch.clientY;
       rawLastY = touch.clientY;
+      lastTouchX = touch.clientX;
+      lastTouchY = touch.clientY;
       startTime = Date.now();
       lastMoveAt = performance.now();
       velocity = 0;
       scrolling = false;
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = 0;
+        if (touchId !== undefined && !scrolling) beginSelection();
+      }, 500);
     },
     { passive: true },
   );
@@ -327,9 +422,19 @@ export function setupTouch(term: Term): void {
     (e: TouchEvent) => {
       const touch = Array.from(e.touches).find((t) => t.identifier === touchId);
       if (touch === undefined) return;
+      lastTouchX = touch.clientX;
+      lastTouchY = touch.clientY;
+      if (selecting) {
+        // Dragging while in selection mode extends the selection instead
+        // of scrolling.
+        e.preventDefault();
+        extendSelection(cellFromPoint(touch.clientX, touch.clientY));
+        return;
+      }
       const cellHeight = screen.clientHeight / term.rows;
       if (!scrolling && Math.abs(touch.clientY - startY) > cellHeight) {
         scrolling = true;
+        cancelLongPress();
       }
       if (!scrolling) return;
       // Keep the browser from panning/refreshing the page while we scroll
@@ -358,6 +463,20 @@ export function setupTouch(term: Term): void {
         (t) => t.identifier === touchId,
       );
       touchId = undefined;
+      cancelLongPress();
+      if (selecting) {
+        // Release ends selection mode: the selected text goes straight to
+        // the clipboard (we are inside a user gesture here, so the
+        // execCommand fallback works even over plain HTTP).
+        selecting = false;
+        e.preventDefault();
+        const text = term.getSelection();
+        if (text !== '') {
+          copySelected(text);
+          showCopyToast();
+        }
+        return;
+      }
       if (scrolling || touch === undefined || Date.now() - startTime >= 500) {
         let reason = 'long';
         if (scrolling) reason = 'scroll';
