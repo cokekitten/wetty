@@ -4,3 +4,23 @@
   position: relative;
   width: 100%;
 }
+
+// iOS WebKit refuses to deliver soft-keyboard input to xterm's helper
+// textarea while it is fully invisible (opacity 0, negative z-index).
+// Keep it 1px and imperceptible instead so the IME treats it as a real
+// editable element.
+#terminal .xterm .xterm-helper-textarea {
+  opacity: 0.01 !important;
+  width: 1px !important;
+  height: 1px !important;
+  min-width: 1px;
+  min-height: 1px;
+  color: transparent;
+  background: transparent;
+  caret-color: transparent;
+  z-index: 5 !important;
+  // Never a direct tap target: mobile browsers snap nearby taps onto
+  // editable elements and focus them natively (= surprise keyboard).
+  // Focus happens via JS only, which pointer-events does not affect.
+  pointer-events: none;
+}
