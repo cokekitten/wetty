@@ -222,12 +222,13 @@ export function setupTouch(term: Term): void {
   setupTrackpadWheel(term, screen);
   const debug = debugLog;
 
-  if (coarsePointer) {
-    // Long-press must not open the browser context menu on Android.
-    screen.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-    });
-  }
+  // No browser context menu over the terminal: on Android it interrupts
+  // long-press selection, on desktop it covers the right-click
+  // interactions of mouse-aware apps (herdr gets the click as a button-2
+  // report instead). Paste still works via Ctrl+Shift+V / ⌘V.
+  screen.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+  });
 
   const { textarea } = term;
   if (textarea && coarsePointer) {
