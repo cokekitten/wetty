@@ -164,7 +164,13 @@ function setupTrackpadWheel(term: Term, screen: HTMLElement): void {
       e.preventDefault();
       e.stopImmediatePropagation();
       const cellHeight = screen.clientHeight / term.rows;
-      const delta = e.deltaY + remainder;
+      // Wheel mice send large discrete ticks (~100-120px); classic
+      // terminals scroll about 3 lines per tick, so scale ticks down.
+      // Trackpads stream small deltas; slightly under finger distance
+      // feels right.
+      const scaled =
+        Math.abs(e.deltaY) >= 50 ? e.deltaY * 0.45 : e.deltaY * 0.75;
+      const delta = scaled + remainder;
       const lines = Math.trunc(delta / cellHeight);
       remainder = delta - lines * cellHeight;
       if (lines !== 0) {
