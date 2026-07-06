@@ -1,221 +1,86 @@
-# WeTTY = Web + TTY.
+# WeTTY — LAN & Mobile Fork
 
-<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+> Fork of [butlerx/wetty](https://github.com/butlerx/wetty): a browser terminal
+> tuned for plain-HTTP LAN deployments, phones/tablets, and terminal
+> multiplexers like tmux / herdr. Original docs:
+> [README.upstream.md](./README.upstream.md).
 
-[![All Contributors](https://img.shields.io/badge/all_contributors-41-orange.svg?style=flat-square)](#contributors-)
+基于 [butlerx/wetty](https://github.com/butlerx/wetty)
+的分支,目标是让"局域网 HTTP 直连 + 手机/平板 + 终端复用器(tmux/herdr)"这套组合真正可用。所有改动都在真实设备(macOS/Windows
+Chrome、iOS Safari/Chrome、Android Chrome)上验证过。
 
-<!-- ALL-CONTRIBUTORS-BADGE:END -->
+## 相对上游的改动
 
-[![Documentation](https://img.shields.io/badge/documentation-yes-brightgreen.svg)](https://github.com/butlerx/wetty/tree/main/docs)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/butlerx/wetty/blob/main/LICENSE)
+### 🌐 局域网 HTTP 部署
 
-> Terminal access in browser over http/https
+- **修复非 localhost 的 HTTP 访问白屏**:上游 helmet 默认 CSP 带
+  `upgrade-insecure-requests`,浏览器会把所有资源请求强制升级为 HTTPS,导致 LAN
+  IP 直连时样式丢失、终端加载失败。已移除该指令(HTTPS 部署不受影响)。
+- **修复 macOS 上 node-pty 无法开终端**:包管理器解包 `node-pty`
+  的 prebuilt 时会丢失 `spawn-helper` 的执行位,postinstall 钩子自动修复。
 
-![WeTTY](./docs/terminal.png?raw=true)
+### 📋 剪贴板(全平台)
 
-Terminal over HTTP and https. WeTTY is an alternative to ajaxterm and anyterm
-but much better than them because WeTTY uses xterm.js which is a full fledged
-implementation of terminal emulation written entirely in JavaScript. WeTTY uses
-websockets rather than Ajax and hence better response time.
+- **划词自动复制**:选中即进系统剪贴板。HTTP 部署下没有
+  `navigator.clipboard`(非安全上下文),自动降级到 `execCommand` 路径。
+- **OSC 52 支持**:tmux / herdr 等程序内部框选复制(它们通过 OSC
+  52 转义序列写剪贴板)现在真正落到系统剪贴板,只写不读(终端内程序无法偷读你的剪贴板)。
+- **快捷键**:`Ctrl+Shift+C` 复制;macOS 上有选区时 `⌘C`
+  复制、无选区时保持浏览器默认行为;粘贴用 `Ctrl+Shift+V` / `⌘V` / 右键粘贴。
+- **macOS Chrome 兜底**:macOS
+  Chrome 会静默丢弃"无手势上下文"的剪贴板写入(却报告成功)。异步到达的 OSC
+  52 内容会同时挂起,在你下一次点击/按键时于真实手势中重写一遍,确保落盘。
+- **macOS 选区修饰键**:默认开启
+  `macOptionClickForcesSelection`——在 tmux/herdr 这类接管鼠标的程序里,**⌥
+  Option+拖选**强制本地选区(其他平台是 Shift+拖选)。
 
-## Prerequisites
+### 📱 移动端(xterm.js 本身没有触摸支持)
 
-- node >=20
-- make
-- python
-- build-essential
+| 手势          | 行为                                                                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 滑动          | 按场景智能滚动:鼠标模式程序(tmux/herdr)收到滚轮报告滚自己的回滚区;vim/less 等交替屏程序收到方向键;普通 shell 滚动 xterm 回滚缓冲区 |
+| 单击          | 纯点击(透传给鼠标模式程序),**永远不弹软键盘**                                                                                      |
+| 双击 / ⌨ 图标 | 唤出软键盘                                                                                                                         |
 
-## Install
+- **iOS/Android 输入法修复**:iOS 软键盘的字符键只发 keyCode 229,xterm 6 的
+  `_inputEvent` 启发式会把随后的 `insertText`
+  输入事件全部丢弃——精确补上这条路径(不影响桌面按键、死键与中文组合输入,不会双发)。
+- **键盘召唤机制**:隐藏输入框平时处于 `readonly + inputmode=none + 未聚焦` 且
+  `focus()`
+  方法被接管的休眠态,任何浏览器合成事件都无法误弹键盘;双击/⌨ 通过"全新聚焦"召唤(移动浏览器唯一可靠承诺弹键盘的路径);键盘收起自动回到休眠态。
 
-```sh
-npm -g i wetty
-```
+### 🔧 调试
 
-## Usage
+访问时在 URL 后加 `#debug`(如
+`http://host:3918/#debug`)会显示一个悬浮日志层,实时追踪触摸、聚焦、视口(键盘弹出/收起)与剪贴板事件——在没有 devtools 的手机上排查问题全靠它。
 
-```sh
-$ wetty --help
-Options:
-  --help, -h              Print help message                            [boolean]
-  --version               Show version number                           [boolean]
-  --conf                  config file to load config from                [string]
-  --ssl-key               path to SSL key                                [string]
-  --ssl-cert              path to SSL certificate                        [string]
-  --ssh-host              ssh server host                                [string]
-  --ssh-port              ssh server port                                [number]
-  --ssh-user              ssh user                                       [string]
-  --title                 window title                                   [string]
-  --ssh-auth              defaults to "password", you can use
-                          "publickey,password" instead                   [string]
-  --ssh-pass              ssh password                                   [string]
-  --ssh-key               path to an optional client private key
-                          (connection will be password-less and
-                          insecure!)                                     [string]
-  --ssh-config            Specifies an alternative ssh configuration
-                          file. For further details see "-F" option in
-                          ssh(1)                                         [string]
-  --force-ssh             Connecting through ssh even if running as
-                          root                                          [boolean]
-  --known-hosts           path to known hosts file                       [string]
-  --base, -b              base path to wetty                             [string]
-  --port, -p              wetty listen port                              [number]
-  --host                  wetty listen host                              [string]
-  --socket                Make wetty listen on unix socket               [string]
-  --command, -c           command to run in shell                        [string]
-  --allow-iframe          Allow wetty to be embedded in an iframe,
-                          defaults to allowing same origin              [boolean]
-  --allow-remote-hosts    Allow wetty to use the host and port params
-                          in a url as ssh destination                   [boolean]
-  --allow-remote-command  Allow wetty to use the command and path
-                          params in a url as command and working
-                          directory on ssh host                         [boolean]
-  --log-level             set log level of wetty server                  [string]
-```
-
-Open your browser on `http://yourserver:3000` and you will prompted to login. Or
-go to `http://yourserver:3000/ssh/<username>` to specify the user beforehand.
-
-If you run it as root it will launch `/bin/login` (where you can specify the
-user name), else it will launch `ssh` and connect by default to `localhost`. The
-SSH connection can be forced using the `--force-ssh` option.
-
-If instead you wish to connect to a remote host you can specify the `--ssh-host`
-option, the SSH port using the `--ssh-port` option and the SSH user using the
-`--ssh-user` option.
-
-Check out the [Flags docs](https://butlerx.github.io/wetty/flags) for a full
-list of flags
-
-### Docker container
-
-To use WeTTY as a docker container, a docker image is available on
-[docker hub](https://hub.docker.com/r/wettyoss/wetty). To run this image, use
+## 快速开始
 
 ```sh
-docker run --rm -p 3000:3000 wettyoss/wetty --ssh-host=<YOUR-IP>
+git clone https://github.com/cokekitten/wetty && cd wetty
+pnpm install
+pnpm build
 ```
 
-and you will be able to open a ssh session to the host given by `YOUR-IP` under
-the URL [http://localhost:3000](http://localhost:3000).
+启动(免密自动登录 + 直接进入 herdr/tmux 的示例):
 
-It is recommended to drive WeTTY behind a reverse proxy to have HTTPS security
-and possibly Let’s Encrypt support. Popular containers to achieve this are
-[nginx-proxy](https://github.com/nginx-proxy/nginx-proxy) and
-[traefik](https://traefik.io/traefik/). For traefik there is an example
-docker-compose file in the containers directory.
+```sh
+node build/main.js --host 0.0.0.0 --port 3918 \
+  --ssh-user <user> --ssh-key ~/.ssh/id_rsa --ssh-auth publickey \
+  --command '~/.local/bin/herdr'   # 可选:页面一打开直接进入复用器
+```
 
-## FAQ
+要点:
 
-Check out the [docs](https://github.com/butlerx/wetty/tree/main/docs)
+- `--ssh-key` 免密登录要求对应公钥在目标机的 `~/.ssh/authorized_keys`
+  里。**注意:配好后局域网内任何设备打开页面即获得 shell,请自行评估网络环境。**
+- `--command` 跑在非登录 shell 里,不加载 `.zshrc`,命令要写完整路径。
+- 改动 `src/` 后需要重新 `pnpm build`;浏览器长开的标签页会一直用旧 JS,记得强刷。
+- 想要更完整的剪贴板体验(免除 macOS Chrome 的"下一次点击"兜底),用
+  `--ssl-key/--ssl-cert` 上 HTTPS 让页面成为安全上下文。
 
-- [Running as daemon](https://butlerx.github.io/wetty/service)
-- [HTTPS Support](https://butlerx.github.io/wetty/https)
-  - [Using NGINX](https://butlerx.github.io/wetty/nginx)
-  - [Using Apache](https://butlerx.github.io/wetty/apache)
-- [Automatic Login](https://butlerx.github.io/wetty/auto-login)
-- [Downloading Files](https://butlerx.github.io/wetty/downloading-files)
+其余用法(Docker、更多参数、开发流程)见上游文档:[README.upstream.md](./README.upstream.md)。
 
-### What browsers are supported?
+## License
 
-WeTTY supports all browsers that
-[xterm.js supports](https://github.com/xtermjs/xterm.js#browser-support).
-
-## Author
-
-👤 **Cian Butler <butlerx@notthe.cloud>**
-
-- Mastodon: [@butlerx@mastodon.ie](https://mastodon.ie/@butlerx)
-- Github: [@butlerx](https://github.com/butlerx)
-
-## Contributing ✨
-
-Contributions, issues and feature requests are welcome!<br />Feel free to check
-[issues page](https://github.com/butlerx/wetty/issues).
-
-Please read the [development docs](https://butlerx.github.io/wetty/development)
-for installing from source and running is dev node
-
-Thanks goes to these wonderful people
-([emoji key](https://allcontributors.org/docs/en/emoji-key)):
-
-<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
-<!-- prettier-ignore-start -->
-<!-- markdownlint-disable -->
-<table>
-  <tbody>
-    <tr>
-      <td align="center" valign="top" width="14.28%"><a href="http://cianbutler.ie"><img src="https://avatars1.githubusercontent.com/u/867930?v=4?s=100" width="100px;" alt="Cian Butler"/><br /><sub><b>Cian Butler</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=butlerx" title="Code">💻</a> <a href="https://github.com/butlerx/WeTTy/commits?author=butlerx" title="Documentation">📖</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://about.me/krishnasrinivas"><img src="https://avatars0.githubusercontent.com/u/634494?v=4?s=100" width="100px;" alt="Krishna Srinivas"/><br /><sub><b>Krishna Srinivas</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=krishnasrinivas" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/acalatrava"><img src="https://avatars1.githubusercontent.com/u/8502129?v=4?s=100" width="100px;" alt="acalatrava"/><br /><sub><b>acalatrava</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=acalatrava" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Strubbl"><img src="https://avatars3.githubusercontent.com/u/97055?v=4?s=100" width="100px;" alt="Strubbl"/><br /><sub><b>Strubbl</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=Strubbl" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/2sheds"><img src="https://avatars3.githubusercontent.com/u/16163?v=4?s=100" width="100px;" alt="Oleg Kurapov"/><br /><sub><b>Oleg Kurapov</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=2sheds" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://www.rabchev.com"><img src="https://avatars0.githubusercontent.com/u/1876061?v=4?s=100" width="100px;" alt="Boyan Rabchev"/><br /><sub><b>Boyan Rabchev</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=rabchev" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/nosemeocurrenada"><img src="https://avatars1.githubusercontent.com/u/3845708?v=4?s=100" width="100px;" alt="Jimmy"/><br /><sub><b>Jimmy</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=nosemeocurrenada" title="Code">💻</a></td>
-    </tr>
-    <tr>
-      <td align="center" valign="top" width="14.28%"><a href="http://www.gerritforge.com"><img src="https://avatars3.githubusercontent.com/u/182893?v=4?s=100" width="100px;" alt="Luca Milanesio"/><br /><sub><b>Luca Milanesio</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=lucamilanesio" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://anthonyjund.com"><img src="https://avatars3.githubusercontent.com/u/39376331?v=4?s=100" width="100px;" alt="Anthony Jund"/><br /><sub><b>Anthony Jund</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=antonyjim" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://www.mirtouf.fr"><img src="https://avatars3.githubusercontent.com/u/5165058?v=4?s=100" width="100px;" alt="mirtouf"/><br /><sub><b>mirtouf</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=mirtouf" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://cor-net.org"><img src="https://avatars1.githubusercontent.com/u/556693?v=4?s=100" width="100px;" alt="Bertrand Roussel"/><br /><sub><b>Bertrand Roussel</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=CoRfr" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://www.benl.com.au/"><img src="https://avatars0.githubusercontent.com/u/6703966?v=4?s=100" width="100px;" alt="Ben Letchford"/><br /><sub><b>Ben Letchford</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=benletchford" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/SouraDutta"><img src="https://avatars0.githubusercontent.com/u/33066261?v=4?s=100" width="100px;" alt="SouraDutta"/><br /><sub><b>SouraDutta</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=SouraDutta" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/koushikmln"><img src="https://avatars3.githubusercontent.com/u/8670988?v=4?s=100" width="100px;" alt="Koushik M.L.N"/><br /><sub><b>Koushik M.L.N</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=koushikmln" title="Code">💻</a></td>
-    </tr>
-    <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://imu.li/"><img src="https://avatars3.githubusercontent.com/u/4085046?v=4?s=100" width="100px;" alt="Imuli"/><br /><sub><b>Imuli</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=imuli" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/perpen"><img src="https://avatars2.githubusercontent.com/u/9963805?v=4?s=100" width="100px;" alt="perpen"/><br /><sub><b>perpen</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=perpen" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://nathanleclaire.com"><img src="https://avatars3.githubusercontent.com/u/1476820?v=4?s=100" width="100px;" alt="Nathan LeClaire"/><br /><sub><b>Nathan LeClaire</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=nathanleclaire" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/MiKr13"><img src="https://avatars2.githubusercontent.com/u/34394719?v=4?s=100" width="100px;" alt="Mihir Kumar"/><br /><sub><b>Mihir Kumar</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=MiKr13" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://redhat.com"><img src="https://avatars0.githubusercontent.com/u/540893?v=4?s=100" width="100px;" alt="Chris Suszynski"/><br /><sub><b>Chris Suszynski</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=cardil" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://9wd.de"><img src="https://avatars1.githubusercontent.com/u/1257835?v=4?s=100" width="100px;" alt="Felix Bartels"/><br /><sub><b>Felix Bartels</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=fbartels" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/jarrettgilliam"><img src="https://avatars3.githubusercontent.com/u/5099690?v=4?s=100" width="100px;" alt="Jarrett Gilliam"/><br /><sub><b>Jarrett Gilliam</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=jarrettgilliam" title="Code">💻</a></td>
-    </tr>
-    <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://harrylee.me"><img src="https://avatars0.githubusercontent.com/u/7056279?v=4?s=100" width="100px;" alt="Harry Lee"/><br /><sub><b>Harry Lee</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=harryleesan" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="http://andreask.cs.illinois.edu"><img src="https://avatars3.githubusercontent.com/u/352067?v=4?s=100" width="100px;" alt="Andreas Klöckner"/><br /><sub><b>Andreas Klöckner</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=inducer" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/DenisKramer"><img src="https://avatars1.githubusercontent.com/u/23534092?v=4?s=100" width="100px;" alt="DenisKramer"/><br /><sub><b>DenisKramer</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=DenisKramer" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/vamship"><img src="https://avatars0.githubusercontent.com/u/7143376?v=4?s=100" width="100px;" alt="Vamshi K Ponnapalli"/><br /><sub><b>Vamshi K Ponnapalli</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=vamship" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://tridnguyen.com"><img src="https://avatars1.githubusercontent.com/u/1652595?v=4?s=100" width="100px;" alt="Tri Nguyen"/><br /><sub><b>Tri Nguyen</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=tnguyen14" title="Documentation">📖</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://felix.pojtinger.com/"><img src="https://avatars1.githubusercontent.com/u/28832235?v=4?s=100" width="100px;" alt="Felix Pojtinger"/><br /><sub><b>Felix Pojtinger</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=pojntfx" title="Documentation">📖</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://nealey.github.io/"><img src="https://avatars3.githubusercontent.com/u/423780?v=4?s=100" width="100px;" alt="Neale Pickett"/><br /><sub><b>Neale Pickett</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=nealey" title="Code">💻</a></td>
-    </tr>
-    <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://www.matthewpiercey.ml"><img src="https://avatars3.githubusercontent.com/u/22581026?v=4?s=100" width="100px;" alt="Matthew Piercey"/><br /><sub><b>Matthew Piercey</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=mtpiercey" title="Documentation">📖</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kholbekj"><img src="https://avatars3.githubusercontent.com/u/2786571?v=4?s=100" width="100px;" alt="Kasper Holbek Jensen"/><br /><sub><b>Kasper Holbek Jensen</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=kholbekj" title="Documentation">📖</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://mastodon.technology/@farhan"><img src="https://avatars1.githubusercontent.com/u/10103765?v=4?s=100" width="100px;" alt="Farhan Khan"/><br /><sub><b>Farhan Khan</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=khanzf" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://www.jurrevriesen.nl"><img src="https://avatars1.githubusercontent.com/u/7419259?v=4?s=100" width="100px;" alt="Jurre Vriesen"/><br /><sub><b>Jurre Vriesen</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=jurruh" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://www.kartar.net/"><img src="https://avatars3.githubusercontent.com/u/4365?v=4?s=100" width="100px;" alt="James Turnbull"/><br /><sub><b>James Turnbull</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=jamtur01" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/deanshub"><img src="https://avatars2.githubusercontent.com/u/2688676?v=4?s=100" width="100px;" alt="Dean Shub"/><br /><sub><b>Dean Shub</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=deanshub" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/lozbrown"><img src="https://avatars3.githubusercontent.com/u/9961593?v=4?s=100" width="100px;" alt="lozbrown "/><br /><sub><b>lozbrown </b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=lozbrown" title="Code">💻</a> <a href="#example-lozbrown" title="Examples">💡</a></td>
-    </tr>
-    <tr>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/sergeir82"><img src="https://avatars0.githubusercontent.com/u/5081149?v=4?s=100" width="100px;" alt="sergeir82"/><br /><sub><b>sergeir82</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=sergeir82" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kmlucy"><img src="https://avatars1.githubusercontent.com/u/13952475?v=4?s=100" width="100px;" alt="Kyle Lucy"/><br /><sub><b>Kyle Lucy</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=kmlucy" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/userdocs"><img src="https://avatars1.githubusercontent.com/u/16525024?v=4?s=100" width="100px;" alt="userdocs"/><br /><sub><b>userdocs</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=userdocs" title="Documentation">📖</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://logmein.com/"><img src="https://avatars3.githubusercontent.com/u/1554533?v=4?s=100" width="100px;" alt="Janos Kasza"/><br /><sub><b>Janos Kasza</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=janoskk" title="Code">💻</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://grantshandy.xyz/"><img src="https://avatars3.githubusercontent.com/u/45475651?v=4?s=100" width="100px;" alt="Grant Handy"/><br /><sub><b>Grant Handy</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=DefunctLizard" title="Documentation">📖</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/LeszekBlazewski"><img src="https://avatars.githubusercontent.com/u/34927142?v=4?s=100" width="100px;" alt="Leszek Błażewski"/><br /><sub><b>Leszek Błażewski</b></sub></a><br /><a href="https://github.com/butlerx/WeTTy/commits?author=LeszekBlazewski" title="Code">💻</a> <a href="#platform-LeszekBlazewski" title="Packaging/porting to new platform">📦</a></td>
-    </tr>
-  </tbody>
-</table>
-
-<!-- markdownlint-restore -->
-<!-- prettier-ignore-end -->
-
-<!-- ALL-CONTRIBUTORS-LIST:END -->
-
-This project follows the
-[all-contributors](https://github.com/all-contributors/all-contributors)
-specification. Contributions of any kind welcome!
-
-## Show your support
-
-Give a ⭐️ if this project helped you!
-
-## 📝 License
-
-Copyright © 2019
-[Cian Butler <butlerx@notthe.cloud>](https://github.com/butlerx).<br /> This
-project is [MIT](https://github.com/butlerx/wetty/blob/main/LICENSE) licensed.
-
----
+MIT,与上游一致。
