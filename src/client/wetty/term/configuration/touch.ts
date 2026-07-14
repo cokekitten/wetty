@@ -31,19 +31,33 @@ export function summonKeyboard(term: Term): void {
   term.focus();
 }
 
+// iOS/iPadOS WebKit fires the input event BEFORE its keyCode-229 keydown,
+// which starves both of xterm's IME fallbacks: `_inputEvent` (skips when a
+// keydown was seen) and the composition helper's textarea diff (always one
+// event behind). Android fires keydown first, so xterm's own diff path
+// handles typing there.
+const appleTouch =
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 /**
- Forward soft-keyboard text to the terminal. iOS keyboards emit keydown
- events with keyCode 229 for character keys, which xterm ignores; the
- characters only surface as `input` events on the helper textarea, which
- xterm never listens to. Forwarding them here is safe from double-sends:
- any key xterm does handle gets preventDefault'ed on keydown and therefore
- never mutates the textarea, so no `input` event fires for it. IME
- composition is left to xterm's own composition helper.
+ Forward soft-keyboard text to the terminal on iOS-family devices, where
+ xterm's own fallbacks never fire (see appleTouch above). Everything is
+ read from event data — the textarea value is NEVER mutated mid-session,
+ because programmatic value changes make mobile browsers restart the
+ input connection, which kills voice-dictation sessions after their
+ first commit. The field is drained on blur instead.
  @param term - the wetty terminal whose textarea to watch
  */
 function setupSoftKeyboardInput(term: Term): void {
   const { textarea } = term;
   if (!textarea) return;
+
+  // Session-over cleanup: keep the field from growing without bound.
+  textarea.addEventListener('blur', () => {
+    textarea.value = '';
+  });
+  if (!appleTouch) return;
 
   let composing = false;
   let keydownIgnored = false;
@@ -52,11 +66,9 @@ function setupSoftKeyboardInput(term: Term): void {
   });
   textarea.addEventListener('compositionend', () => {
     // xterm's composition helper reads the textarea value on a timeout;
-    // wait it out before resuming, then drop the leftover value so it
-    // doesn't leak into later composition snapshots.
+    // wait it out before resuming.
     setTimeout(() => {
       composing = false;
-      textarea.value = '';
     }, 100);
   });
   textarea.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -69,22 +81,18 @@ function setupSoftKeyboardInput(term: Term): void {
     const ev = e as InputEvent;
     if (composing || ev.isComposing) return;
     // xterm's own `_inputEvent` already forwards events that never saw a
-    // keydown; only pick up the ones it drops — soft keyboards (iOS) fire
-    // keydown 229 before each character, which makes xterm skip them.
+    // keydown; only pick up the ones it drops.
     if (!ev.composed || !keydownIgnored) return;
     keydownIgnored = false;
     if (ev.inputType === 'insertText' && ev.data !== null) {
       term.input(ev.data, true);
-      textarea.value = '';
     } else if (
       ev.inputType === 'insertLineBreak' ||
       ev.inputType === 'insertParagraph'
     ) {
       term.input('\r', true);
-      textarea.value = '';
     } else if (ev.inputType === 'deleteContentBackward') {
       term.input('\x7F', true);
-      textarea.value = '';
     }
   });
 }
