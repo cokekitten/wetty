@@ -1,13 +1,17 @@
-# WeTTY — LAN & Mobile Fork
+# 📱 PocketTTY
 
-> Fork of [butlerx/wetty](https://github.com/butlerx/wetty): a browser terminal
-> tuned for plain-HTTP LAN deployments, phones/tablets, and terminal
-> multiplexers like tmux / herdr. Original docs:
+**手机端深度优化、为 herdr /
+tmux 量身适配的网页终端**——打开浏览器,你的终端(和里面的 AI 编码代理)就在口袋里。
+
+> A mobile-first web terminal, purpose-tuned for
+> [herdr](https://github.com/ogulcancelik/herdr) / tmux: touch gestures, mobile
+> IME, real clipboard (OSC 52), keyboard avoidance. Fork of
+> [butlerx/wetty](https://github.com/butlerx/wetty) — original docs:
 > [README.upstream.md](./README.upstream.md).
 
-基于 [butlerx/wetty](https://github.com/butlerx/wetty)
-的分支,目标是让"局域网 HTTP 直连 + 手机/平板 + 终端复用器(tmux/herdr)"这套组合真正可用。所有改动都在真实设备(macOS/Windows
-Chrome、iOS Safari/Chrome、Android Chrome)上验证过。
+**为什么存在**:原版 wetty 在手机上几乎不可用(不能滚动、打不了字、复制不了),对tmux/herdr 这类接管鼠标的复用器也没有专门适配。PocketTTY把这两块补齐:移动端的滚动/点击/键盘/输入法/选择复制全套手势,以及复用器场景下的滚轮语义、右键透传、OSC
+52 剪贴板。所有改动都在真实设备(macOS/Windows Chrome、iOS Safari/Chrome、Android
+Chrome)上验证过。
 
 ## 相对上游的改动
 
@@ -70,7 +74,7 @@ Chrome、iOS Safari/Chrome、Android Chrome)上验证过。
 ## 快速开始
 
 ```sh
-git clone https://github.com/cokekitten/wetty && cd wetty
+git clone https://github.com/cokekitten/PocketTTY && cd PocketTTY
 pnpm install
 pnpm build
 ```
