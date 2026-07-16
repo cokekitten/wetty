@@ -140,9 +140,8 @@ node build/main.js --host 0.0.0.0 --port 3918 --title PocketTTY \
 
 - **键盘避让**:基于 `visualViewport` 收缩终端,提示符保持在键盘上方——感谢
   [@snipersteve](https://github.com/snipersteve) 的贡献(#1)。
-- **iOS/Android 输入法**:iOS 软键盘字符键只发 keyCode
-  229 且 input 事件先于 keydown,xterm
-  6 的三条输入路径全部失效——按平台事件顺序精确补齐(Android 走 xterm 原生 diff 路径,iOS 走事件数据转发),互不双发。语音听写全程不触碰输入框,不会被打断。
+- **iOS/Android 输入法(镜像同步)**:软键盘(尤其语音听写)不是只追加的——它会范围修改已上屏的字。移动端以隐藏输入框内容为唯一真相,每次变化与影子副本做 diff,翻译成"退格×N+重打尾部"发给终端;追加、删除、语音修正统一处理。xterm 的三条内置输入路径(input 事件、229
+  diff、组合助手)在移动端被捕获阶段拦截,杜绝双发。会话期间绝不程序性改动输入框(否则 IME 连接重置、语音中断),仅在失焦和回车后清空。
 - **键盘召唤机制**:隐藏输入框平时处于 `readonly + inputmode=none + 未聚焦` 且
   `focus()`
   方法被接管的休眠态,任何浏览器合成事件都无法误弹键盘;双击/⌨ 通过"全新聚焦"召唤;键盘收起自动回到休眠态。

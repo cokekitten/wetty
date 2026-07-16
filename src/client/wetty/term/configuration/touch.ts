@@ -31,70 +31,120 @@ export function summonKeyboard(term: Term): void {
   term.focus();
 }
 
-// iOS/iPadOS WebKit fires the input event BEFORE its keyCode-229 keydown,
-// which starves both of xterm's IME fallbacks: `_inputEvent` (skips when a
-// keydown was seen) and the composition helper's textarea diff (always one
-// event behind). Android fires keydown first, so xterm's own diff path
-// handles typing there.
-const appleTouch =
-  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
 /**
- Forward soft-keyboard text to the terminal on iOS-family devices, where
- xterm's own fallbacks never fire (see appleTouch above). Everything is
- read from event data — the textarea value is NEVER mutated mid-session,
- because programmatic value changes make mobile browsers restart the
- input connection, which kills voice-dictation sessions after their
- first commit. The field is drained on blur instead.
- @param term - the wetty terminal whose textarea to watch
- */
-function setupSoftKeyboardInput(term: Term): void {
-  const { textarea } = term;
-  if (!textarea) return;
+ Mobile input mirror. Soft keyboards — voice dictation above all — don't
+ type append-only: they REVISE earlier words by range-replacing text in
+ the field. A terminal only accepts appends and backspaces, so per-event
+ forwarding turns every revision into garbage appended at the prompt.
+ Instead, treat the textarea value as the source of truth: after every
+ change, diff it against a shadow of what the terminal has received and
+ emit `backspace × N + retyped tail`. Appends, deletions and mid-text
+ revisions all reduce to the same sync.
 
-  // Session-over cleanup: keep the field from growing without bound.
-  textarea.addEventListener('blur', () => {
+ Exclusivity: xterm has three internal paths that would double-send
+ (`_inputEvent`, the 229-keydown textarea diff, the composition helper).
+ All three read events on the textarea itself; capture-phase listeners on
+ an ancestor run first and stopPropagation() starves them. The field is
+ never programmatically mutated mid-session (that restarts the IME
+ connection and kills dictation) — it drains on blur and after Enter,
+ when no utterance can still be revising.
+ @param term - the wetty terminal whose textarea to mirror
+ */
+function setupMobileInput(term: Term): void {
+  const { textarea, element } = term;
+  if (!textarea || !element) return;
+
+  let synced = '';
+  const drain = (): void => {
+    synced = '';
     textarea.value = '';
-  });
-  if (!appleTouch) return;
+  };
+  // Session-over cleanup: keep the field from growing without bound.
+  textarea.addEventListener('blur', drain);
+  if (!coarsePointer) return;
 
   let composing = false;
-  let keydownIgnored = false;
-  textarea.addEventListener('compositionstart', () => {
+
+  const sync = (): void => {
+    const { value } = textarea;
+    if (value === synced) return;
+    // Code-point arrays: one backspace erases one code point at the line
+    // editor, and surrogate pairs must never be split by the diff.
+    const before = Array.from(synced);
+    const after = Array.from(value);
+    let prefix = 0;
+    while (
+      prefix < before.length &&
+      prefix < after.length &&
+      before[prefix] === after[prefix]
+    ) {
+      prefix += 1;
+    }
+    const backspaces = before.length - prefix;
+    const insert = after.slice(prefix).join('');
+    if (backspaces > 0) term.input('\x7F'.repeat(backspaces), true);
+    if (insert !== '') term.input(insert, true);
+    synced = value;
+    debugLog(
+      `mirror -${String(backspaces)} +${String(Array.from(insert).length)}`,
+    );
+    // A committed newline ends the line at the shell: it cannot be
+    // revised any more, so start the next utterance from a clean field.
+    if (insert.includes('\n')) setTimeout(drain, 0);
+  };
+
+  element.addEventListener(
+    'input',
+    (e) => {
+      e.stopPropagation();
+      if (composing || e.isComposing) return;
+      sync();
+    },
+    true,
+  );
+  const suppressComposition = (type: string, onEvent?: () => void): void => {
+    element.addEventListener(
+      type,
+      (e) => {
+        e.stopPropagation();
+        onEvent?.();
+      },
+      true,
+    );
+  };
+  suppressComposition('compositionstart', () => {
     composing = true;
   });
-  textarea.addEventListener('compositionend', () => {
-    // xterm's composition helper reads the textarea value on a timeout;
-    // wait it out before resuming.
-    setTimeout(() => {
-      composing = false;
-    }, 100);
+  suppressComposition('compositionupdate');
+  suppressComposition('compositionend', () => {
+    composing = false;
+    // The browser applies the committed text to the field right after
+    // this event; sync once it has landed.
+    setTimeout(sync, 0);
   });
-  textarea.addEventListener('keydown', (e: KeyboardEvent) => {
-    // 229 in the deprecated keyCode is the only reliable marker for
-    // soft-keyboard input that xterm will drop.
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    keydownIgnored = e.keyCode === 229;
-  });
-  textarea.addEventListener('input', (e: Event) => {
-    const ev = e as InputEvent;
-    if (composing || ev.isComposing) return;
-    // xterm's own `_inputEvent` already forwards events that never saw a
-    // keydown; only pick up the ones it drops.
-    if (!ev.composed || !keydownIgnored) return;
-    keydownIgnored = false;
-    if (ev.inputType === 'insertText' && ev.data !== null) {
-      term.input(ev.data, true);
-    } else if (
-      ev.inputType === 'insertLineBreak' ||
-      ev.inputType === 'insertParagraph'
-    ) {
-      term.input('\r', true);
-    } else if (ev.inputType === 'deleteContentBackward') {
-      term.input('\x7F', true);
-    }
-  });
+  element.addEventListener(
+    'keydown',
+    (e) => {
+      const ke = e;
+      // eslint-disable-next-line @typescript-eslint/no-deprecated
+      const code = ke.keyCode;
+      if (code === 229) {
+        // IME-processed keys carry no usable key; hide them from xterm,
+        // whose 229 handler diff-sends the textarea and would double.
+        e.stopPropagation();
+      } else if (code === 8 && textarea.value !== '') {
+        // Let the browser edit the field; the mirror forwards the
+        // deletion. (With an empty field xterm handles Backspace, so
+        // erasing text typed before a drain still works.)
+        e.stopPropagation();
+      } else if (code === 13) {
+        // xterm sends \r itself; the submitted line cannot be revised
+        // any more, so reset the mirror.
+        setTimeout(drain, 0);
+      }
+    },
+    true,
+  );
 }
 
 /**
@@ -226,7 +276,7 @@ export function setupTouch(term: Term): void {
   const screen = term.element?.querySelector('.xterm-screen');
   if (!(screen instanceof HTMLElement)) return;
 
-  setupSoftKeyboardInput(term);
+  setupMobileInput(term);
   setupTrackpadWheel(term, screen);
   const debug = debugLog;
 
